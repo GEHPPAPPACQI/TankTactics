@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tank Tactics</title>
+<style>
+  :root { --cell: min(4.4vw, 34px); }
+  body { font-family: system-ui, sans-serif; background: #101418; color: #e8e8e8;
+         margin: 0; display: flex; flex-direction: column; align-items: center; padding: 16px; }
+  h1 { font-size: 1.3rem; margin: 8px 0 12px; letter-spacing: 2px; }
+  h2 { font-size: 1rem; margin: 0 0 8px; color: #9fb0c0; }
+  .panel { background: #1a2129; border-radius: 10px; padding: 16px; margin-bottom: 14px;
+           box-sizing: border-box; }
+  label { display: block; margin: 8px 0 2px; font-size: .85rem; color: #9fb0c0; }
+  input, select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #33404e;
+                  background: #0d1117; color: #e8e8e8; box-sizing: border-box; }
+  button { margin-top: 12px; padding: 9px 18px; border: 0; border-radius: 6px;
+           background: #2f81f7; color: #fff; font-weight: 600; cursor: pointer; }
+  button.small { padding: 6px 10px; font-size: .85rem; margin-top: 6px; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  #game { display: none; justify-content: center; align-items: flex-start;
+          gap: 14px; flex-wrap: wrap; width: 100%; }
+  #left { order: 1; } .board-panel { order: 2; } #right { order: 3; }
+  .board-panel { width: fit-content; max-width: 96vw; }
+  .side { width: 300px; max-width: 96vw; }
+
+  #board { display: grid; gap: 2px; margin: 12px auto 0; width: fit-content; }
+  .cell { width: var(--cell); height: var(--cell); border-radius: 3px;
+          display: flex; align-items: center; justify-content: center;
+          font-size: calc(var(--cell) * .5); overflow: hidden; position: relative; }
+  .fog { background: #0a0d10; }
+  .empty { background: #3d5a36; }
+  .water { background: #1d4e7a; }
+  .water.fogw { background: #0d2236; }
+  .empty.fogl { background: #1c2a1a; }
+  .tank { background: #2f81f7; color: #fff; font-weight: 700; }
+  .you  { background: #3fb950; color: #06110a; font-weight: 700; }
+  .cell img { width: 100%; height: 100%; object-fit: cover; border-radius: 3px; }
+  .cell.in-range { box-shadow: inset 0 0 0 1px rgba(248,81,73,.45); background-image: linear-gradient(rgba(248,81,73,.22),rgba(248,81,73,.22)); }
+  .cell.in-range.tank  { box-shadow: inset 0 0 0 2px #f85149; }
+  .cell.in-range.you   { box-shadow: inset 0 0 0 2px #3fb950; }
+  .cell .tag { position: absolute; bottom: 0; left: 0; right: 0; font-size: 8px;
+               background: rgba(0,0,0,.55); color: #fff; text-align: center;
+               overflow: hidden; white-space: nowrap; }
+  #stats { font-size: .9rem; color: #9fb0c0; margin-top: 10px; text-align: center; }
+  #msg { min-height: 1.2em; font-size: .9rem; margin-top: 8px; }
+  .ok { color: #3fb950; } .err { color: #f85149; }
+
+  #legend { margin-top: 10px; font-size: .85rem; }
+  #legend .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+  #legend .row:hover { color: #2f81f7; }
+  .av { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+        background: #2f81f7; color: #fff; display: inline-flex; align-items: center;
+        justify-content: center; font-size: 11px; font-weight: 700; flex: 0 0 auto; }
+
+  #rules-panel ul { margin: 0; padding-left: 18px; font-size: .85rem; color: #b7c3d0; }
+  #rules-panel li { margin-bottom: 6px; }
+
+  #death { text-align: center; font-size: 1.1rem; }
+  .dead-board { font-size: 3rem; }
+</style>
+</head>
+<body>
+<h1>🛡 TANK TACTICS</h1>
+
+<div class="panel" id="login-panel" style="width:min(96vw,360px)">
+  <label>Player name</label>
+  <input id="name" autocomplete="off">
+  <label>Password</label>
+  <input id="password" type="password">
+  <button id="login-btn">Enter battlefield</button>
+  <div id="login-msg"></div>
+</div>
+
+<div id="game">
+  <!-- LEFT: board -->
+  <div class="panel board-panel">
+    <div id="board"></div>
+    <div id="stats"></div>
+    <div id="death" style="display:none">
+      <div class="dead-board">💀</div>
+      <div>You were destroyed.</div>
+      <div id="killer-line"></div>
+    </div>
+    <div id="legend"></div>
+    <button id="refresh" class="small">Refresh view</button>
+  </div>
+
+  <div class="side" id="left">
+    <div class="panel" id="action-panel">
+      <h2>Your tank</h2>
+      <div id="who" style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span class="av" id="who-av">?</span><b id="who-name"></b>
+      </div>
+      <label>Action</label>
+      <select id="act-type">
+        <option value="move">Move (1 AP, 1 cell)</option>
+        <option value="attack">Attack (1 AP, range 3, 1 damage)</option>
+        <option value="transfer">Transfer AP</option>
+        <option value="defend">Defend (1 AP, blocks 1 damage, once/day)</option>
+      </select>
+      <div id="p-target-wrap" style="display:none">
+        <label id="p-target-label">Target player</label>
+        <input id="act-target" placeholder="player name" autocomplete="off">
+      </div>
+      <div id="p-dir-wrap" style="display:none">
+        <label>Direction</label>
+        <select id="act-dir">
+          <option value="0">↑ up</option><option value="1">↓ down</option>
+          <option value="2">← left</option><option value="3">→ right</option>
+          <option value="4">↖ up-left</option><option value="5">↗ up-right</option>
+          <option value="6">↙ down-left</option><option value="7">↘ down-right</option>
+        </select>
+      </div>
+      <div id="p-amount-wrap" style="display:none">
+        <label>Amount of AP</label>
+        <input id="act-amount" type="number" min="1" value="1">
+      </div>
+      <button id="submit-btn">Submit action</button>
+      <div id="msg"></div>
+      <div id="ap-note" style="font-size:.85rem;color:#f85149;min-height:1.1em;margin-top:4px"></div>
+      <hr style="border-color:#33404e;margin:14px 0 4px">
+      <label>Your avatar image URL</label>
+      <input id="avatar-url" placeholder="https://…">
+      <button id="avatar-btn" class="small">Set avatar</button>
+      <div style="font-size:.8rem;color:#6e7b8a;margin-top:8px">
+        Actions are queued and resolved at 12:00 daily, then every living tank gains +1 AP.
+      </div>
+    </div>
+
+  </div>
+
+  <div class="side" id="right">
+    <div class="panel" id="rules-panel">
+      <h2>Rules</h2>
+      <ul>
+        <li>15×15 board, <b>3 lives</b>, start with <b>1 AP</b>.</li>
+        <li><b>Every day at 12:00</b>: queued actions resolve (random order), then all living tanks gain <b>+1 AP</b>. Submit your action before the next tick.</li>
+        <li><b>Move</b> — 1 AP, one cell (8 directions; not into water, tanks or borders).</li>
+        <li><b>Attack</b> — 1 AP, circular range 3, deals 1 damage.</li>
+        <li><b>Transfer</b> — give any amount of AP to another living tank.</li>
+        <li><b>Defend</b> — 1 AP, blocks 1 damage. Max <b>one defense per day</b>, even with more AP.</li>
+        <li><b>Fog of war</b>: you see a circle of radius 6 around your tank. Attack range is separate (3).</li>
+        <li>You may queue actions <b>only up to your available AP</b>.</li>
+        <li><b>Dead tanks</b> learn only who killed them, and vanish from the board.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ▼▼▼ PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL HERE ▼▼▼ */
+const API_URL = "https://script.google.com/macros/s/AKfycbzLlzf1GprmCLfOJgakb7YGjWu2U0JNToiFBisuSeItSbB31GjjDlazuiTNLmDQ-LHYLw/exec";
+/* ▲▲▲ -------------------------------------------------- ▲▲▲ */
+
+const $ = id => document.getElementById(id);
+let creds = null;
+let lastView = null;
+
+$('login-btn').onclick = async () => {
+  creds = { name: $('name').value.trim(), password: $('password').value };
+  localStorage.setItem('tt_creds', JSON.stringify(creds));
+  await refresh();
+};
+
+const saved = localStorage.getItem('tt_creds');
+if (saved) { creds = JSON.parse(saved); $('name').value = creds.name; $('password').value = creds.password; }
+
+$('refresh').onclick = refresh;
+$('act-type').onchange = syncForm;
+syncForm();
+
+function syncForm() {
+  const t = $('act-type').value;
+  $('p-dir-wrap').style.display    = t === 'move' ? 'block' : 'none';
+  $('p-target-wrap').style.display = (t === 'attack' || t === 'transfer') ? 'block' : 'none';
+  $('p-amount-wrap').style.display = t === 'transfer' ? 'block' : 'none';
+  $('p-target-label').textContent  = t === 'attack' ? 'Target player (within range 3)' : 'Target player';
+}
+
+async function api(params) {
+  const url = API_URL + '?name=' + encodeURIComponent(creds.name) +
+              '&password=' + encodeURIComponent(creds.password) + params;
+  const res = await fetch(url);
+  return res.json();
+}
+
+async function refresh() {
+  if (!creds || !creds.name) return;
+  try {
+    const data = await api('');
+    if (!data.ok) {
+      $('login-msg').textContent = 'Login failed: ' + data.error;
+      $('login-msg').className = 'err';
+      return;
+    }
+    $('login-panel').style.display = 'none';
+    $('game').style.display = 'flex';
+    render(data.view);
+  } catch (e) {
+    $('login-msg').textContent = 'Network error — is API_URL set correctly?';
+    $('login-msg').className = 'err';
+  }
+}
+
+function render(view) {
+  lastView = view;
+  setWho(view.you);
+
+  if (!view.you.alive) {
+    $('board').style.display = 'none';
+    $('action-panel').style.display = 'none';
+    $('legend').innerHTML = '';
+    $('stats').textContent = '';
+    $('death').style.display = 'block';
+    $('killer-line').textContent = view.you.killer
+      ? 'Destroyed by: ' + view.you.killer : 'Cause of destruction unknown.';
+    return;
+  }
+  $('death').style.display = 'none';
+  $('action-panel').style.display = 'block';
+  $('board').style.display = 'grid';
+  $('board').style.gridTemplateColumns = 'repeat(' + view.board_size + ', var(--cell))';
+
+  const frag = document.createDocumentFragment();
+  for (let y = 0; y < view.board_size; y++) {
+    for (let x = 0; x < view.board_size; x++) {
+      const d = document.createElement('div');
+      const c = view.cells[x + ',' + y];
+      const inRange = Math.hypot(x - view.you.x, y - view.you.y) <= view.attack_range;
+      const isLand = !view.terrain || view.terrain[y][x] === '1';
+      if (c) {
+        d.className = 'cell ' + (c.you ? 'you' : 'tank') + (inRange ? ' in-range' : '');
+        d.title = c.player;
+        if (c.avatar) {
+          const img = document.createElement('img');
+          img.src = c.avatar; img.alt = c.player;
+          img.onerror = () => { img.remove(); d.textContent = c.you ? '★' : '▲'; };
+          d.appendChild(img);
+        } else {
+          d.textContent = c.you ? '★' : '▲';
+        }
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = c.you ? 'YOU' : c.player;
+        d.appendChild(tag);
+      } else {
+        const ddx = x - view.you.x, ddy = y - view.you.y;
+        const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+        const vis = dist <= view.fog_radius;
+        d.className = 'cell ' + (isLand ? 'empty' + (vis ? '' : ' fogl') : 'water' + (vis ? '' : ' fogw')) + (inRange ? ' in-range' : '');
+      }
+      frag.appendChild(d);
+    }
+  }
+  $('board').innerHTML = '';
+  $('board').appendChild(frag);
+
+  const avail = view.available_ap != null ? view.available_ap : view.you.ap;
+  updateGuard();
+  $('stats').textContent =
+    'AP: ' + view.you.ap + ' (available for actions: ' + avail + ')' +
+    '  •  Lives: ' + view.you.lives +
+    '  •  Defenses used today: ' + view.you.defenses_today +
+    '  •  Position: (' + view.you.x + ',' + view.you.y + ')';
+
+  // Legend of visible players — click to fill the target field and scheme.
+  const leg = $('legend');
+  leg.innerHTML = '<div style="font-size:.8rem;color:#6e7b8a;margin-bottom:4px">'
+    + '<span style="color:#f85149">█</span> red tint = your attack range (circle) (' + view.attack_range + ')</div>'
+    + '<b style="font-size:.85rem;color:#9fb0c0">In view:</b>';
+  if (!view.players_in_view || !view.players_in_view.length) {
+    leg.innerHTML += '<div style="font-size:.85rem;color:#6e7b8a">no one… yet</div>';
+  } else {
+    view.players_in_view.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const av = document.createElement(p.avatar ? 'img' : 'span');
+      av.className = 'av';
+      if (p.avatar) { av.src = p.avatar; av.onerror = () => { av.remove(); }; }
+      else av.textContent = p.name[0].toUpperCase();
+      const nm = document.createElement('span');
+      nm.textContent = p.name + '  (' + p.x + ',' + p.y + ')';
+      row.appendChild(av); row.appendChild(nm);
+      row.onclick = () => {
+        $('act-target').value = p.name;
+        $('msg').textContent = 'Targeting ' + p.name + '…';
+        $('msg').className = 'ok';
+      };
+      leg.appendChild(row);
+    });
+  }
+}
+
+function setWho(you) {
+  $('who-name').textContent = you.name;
+  const a = $('who-av');
+  if (you.avatar) {
+    if (a.tagName !== 'IMG') {
+      const img = document.createElement('img');
+      img.className = 'av'; img.id = 'who-av';
+      a.replaceWith(img);
+    }
+    $('who-av').src = you.avatar;
+  } else {
+    if (a.tagName === 'IMG') {
+      const sp = document.createElement('span');
+      sp.className = 'av'; sp.id = 'who-av';
+      a.replaceWith(sp);
+    }
+    $('who-av').textContent = you.name[0].toUpperCase();
+  }
+}
+
+$('submit-btn').onclick = async () => {
+  const t = $('act-type').value;
+  const action = { type: t };
+  if (t === 'move') action.direction = parseInt($('act-dir').value, 10);
+  if (t === 'attack' || t === 'transfer') action.target = $('act-target').value.trim();
+  if (t === 'transfer') action.amount = parseInt($('act-amount').value, 10);
+
+  $('submit-btn').disabled = true;
+  $('msg').textContent = 'Submitting…';
+  $('msg').className = '';
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // avoids CORS preflight
+      body: JSON.stringify({ name: creds.name, password: creds.password, action })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      $('msg').textContent = '✔ Action queued — resolves at 12:00.';
+      $('msg').className = 'ok';
+      refresh();
+    } else {
+      $('msg').textContent = '✖ ' + (data.error || 'rejected') +
+        (data.available != null ? ' (AP available: ' + data.available + ')' : '');
+      $('msg').className = 'err';
+    }
+  } catch (e) {
+    $('msg').textContent = '✖ Network error';
+    $('msg').className = 'err';
+  }
+  updateGuard();
+};
+
+function updateGuard() {
+  if (!lastView || !lastView.you.alive) return;
+  const avail = lastView.available_ap != null ? lastView.available_ap : lastView.you.ap;
+  const broke = avail < 1;
+  $('submit-btn').disabled = broke;
+  $('ap-note').textContent = broke ? 'No AP left — next +1 AP at 12:00.' : '';
+}
+
+$('avatar-btn').onclick = async () => {
+  $('avatar-btn').disabled = true;
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ name: creds.name, password: creds.password,
+                             action: { type: 'set_avatar', avatar: $('avatar-url').value.trim() } })
+    });
+    const data = await res.json();
+    $('msg').textContent = data.ok ? '✔ Avatar set.' : '✖ ' + (data.error || 'failed');
+    $('msg').className = data.ok ? 'ok' : 'err';
+    if (data.ok) refresh();
+  } catch (e) {
+    $('msg').textContent = '✖ Network error';
+    $('msg').className = 'err';
+  }
+  $('avatar-btn').disabled = false;
+};
+</script>
+</body>
+</html>
