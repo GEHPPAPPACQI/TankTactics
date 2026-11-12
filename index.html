@@ -103,7 +103,7 @@
       </select>
       <div id="p-target-wrap" style="display:none">
         <label id="p-target-label">Target player</label>
-        <input id="act-target" placeholder="player name" autocomplete="off">
+        <select id="act-target"></select>
       </div>
       <div id="p-dir-wrap" style="display:none">
         <label>Direction</label>
@@ -126,7 +126,7 @@
       <input id="avatar-url" placeholder="https://…">
       <button id="avatar-btn" class="small">Set avatar</button>
       <div style="font-size:.8rem;color:#6e7b8a;margin-top:8px">
-        Actions are queued and resolved at 12:00 daily, then every living tank gains +1 AP.
+        Actions resolve instantly. Every day at 12:00 every living tank gains +1 AP.
       </div>
     </div>
 
@@ -137,7 +137,7 @@
       <h2>Rules</h2>
       <ul>
         <li>15×15 board, <b>3 lives</b>, start with <b>1 AP</b>.</li>
-        <li><b>Every day at 12:00</b>: queued actions resolve (random order), then all living tanks gain <b>+1 AP</b>. Submit your action before the next tick.</li>
+        <li>Actions resolve <b>instantly</b>. <b>Every day at 12:00</b> all living tanks gain <b>+1 AP</b>.</li>
         <li><b>Move</b> — 1 AP, one cell (8 directions; not into water, tanks or borders).</li>
         <li><b>Attack</b> — 1 AP, circular range 3, deals 1 damage.</li>
         <li><b>Transfer</b> — give any amount of AP to another living tank.</li>
@@ -152,12 +152,13 @@
 
 <script>
 /* ▼▼▼ PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL HERE ▼▼▼ */
-const API_URL = "https://script.google.com/macros/s/AKfycbzLlzf1GprmCLfOJgakb7YGjWu2U0JNToiFBisuSeItSbB31GjjDlazuiTNLmDQ-LHYLw/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbzUsvdUT_E26Tfv8y8X__zyrCwS7G8vfW9AuVGSAN6asaYhdXGxwNJKPWSB-k4nYKwRsA/exec";
 /* ▲▲▲ -------------------------------------------------- ▲▲▲ */
 
 const $ = id => document.getElementById(id);
 let creds = null;
 let lastView = null;
+setInterval(() => { if (creds && creds.name) refresh(); }, 4000);
 
 $('login-btn').onclick = async () => {
   creds = { name: $('name').value.trim(), password: $('password').value };
@@ -178,6 +179,25 @@ function syncForm() {
   $('p-target-wrap').style.display = (t === 'attack' || t === 'transfer') ? 'block' : 'none';
   $('p-amount-wrap').style.display = t === 'transfer' ? 'block' : 'none';
   $('p-target-label').textContent  = t === 'attack' ? 'Target player (within range 3)' : 'Target player';
+  fillTargets();
+}
+
+function fillTargets() {
+  const sel = $('act-target'), v = lastView, t = $('act-type').value;
+  const prev = sel.value; sel.innerHTML = '';
+  if (!v || !v.players_in_view) return;
+  let list = v.players_in_view;
+  if (t === 'attack') list = list.filter(p => Math.hypot(p.x - v.you.x, p.y - v.you.y) <= v.attack_range);
+  if (!list.length) {
+    const o = document.createElement('option'); o.value = '';
+    o.textContent = t === 'attack' ? 'no one in range' : 'no one in view'; sel.appendChild(o); return;
+  }
+  list.forEach(p => {
+    const o = document.createElement('option'); o.value = p.name;
+    o.textContent = p.name + ' — ' + '♥'.repeat(p.lives) + ' (' + p.x + ',' + p.y + ')';
+    sel.appendChild(o);
+  });
+  if (list.some(p => p.name === prev)) sel.value = prev;
 }
 
 async function api(params) {
@@ -244,7 +264,7 @@ function render(view) {
         }
         const tag = document.createElement('span');
         tag.className = 'tag';
-        tag.textContent = c.you ? 'YOU' : c.player;
+        tag.textContent = (c.you ? 'YOU' : c.player) + ' ' + '♥'.repeat(c.lives || 0);
         d.appendChild(tag);
       } else {
         const ddx = x - view.you.x, ddy = y - view.you.y;
@@ -259,6 +279,7 @@ function render(view) {
   $('board').appendChild(frag);
 
   const avail = view.available_ap != null ? view.available_ap : view.you.ap;
+  fillTargets();
   updateGuard();
   $('stats').textContent =
     'AP: ' + view.you.ap + ' (available for actions: ' + avail + ')' +
@@ -282,10 +303,11 @@ function render(view) {
       if (p.avatar) { av.src = p.avatar; av.onerror = () => { av.remove(); }; }
       else av.textContent = p.name[0].toUpperCase();
       const nm = document.createElement('span');
-      nm.textContent = p.name + '  (' + p.x + ',' + p.y + ')';
+      nm.textContent = p.name + '  ' + '♥'.repeat(p.lives) + '  (' + p.x + ',' + p.y + ')';
       row.appendChild(av); row.appendChild(nm);
       row.onclick = () => {
-        $('act-target').value = p.name;
+        if ($('act-type').value !== 'attack' && $('act-type').value !== 'transfer') $('act-type').value = 'attack';
+        syncForm(); $('act-target').value = p.name;
         $('msg').textContent = 'Targeting ' + p.name + '…';
         $('msg').className = 'ok';
       };
@@ -332,7 +354,7 @@ $('submit-btn').onclick = async () => {
     });
     const data = await res.json();
     if (data.ok) {
-      $('msg').textContent = '✔ Action queued — resolves at 12:00.';
+      $('msg').textContent = '✔ ' + (data.result || 'done');
       $('msg').className = 'ok';
       refresh();
     } else {
